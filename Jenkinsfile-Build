@@ -1,0 +1,136 @@
+pipeline {
+	agent any
+	environment {
+		EMAIL_TO = 'test_akashk31@chdsmtp.com'
+		}
+	stages {
+		stage("Validate JSON files"){
+		when {
+				branch 'main'
+			 }		
+			steps{
+				dir("${env.WORKSPACE}/JSON"){
+						sh "chmod +x -R ${env.WORKSPACE}/JSON"
+                        sh "./json_validate.sh"
+					}
+				}
+			post{
+				success{
+					echo "JSON file is valid."
+				}
+				failure {
+					echo "Caught: JSON not valid."
+				}
+			}
+		}		
+		stage('Run the code') {
+		when {
+				branch 'main'
+			 }
+			steps {
+				dir("${env.WORKSPACE}/Python"){
+						sh "pwd"
+						sh 'sudo python calc.py'
+						sh 'sudo python test_calc.py'
+					}
+			}
+			post {
+				success {
+					echo "Code ran successfully."
+				}
+				failure {
+					echo "Failure in running code."
+				}
+			}
+		}
+		stage('Unit testing Python') {
+		when {
+				branch 'main'
+			}
+			steps {
+				sh 'sudo python3.6 -m pytest --junitxml test-results.xml ./Python/test_calc.py && sudo chmod 777 test-results.xml'
+			}
+			post {
+				success {
+					echo "Publishing Unit test cases"
+					junit 'test-results.xml'
+				}
+				failure {
+					echo "Failure in unit testing Python code."
+				}
+			}
+		}
+		stage('Code Coverage USING COBERTURA') {
+		when {
+				branch 'main'
+			}
+			steps {
+				sh 'sudo python3.6 -m coverage run -m pytest && sudo python3.6 -m coverage xml -o ./coverage.xml && sudo chmod 777 ./coverage.xml'
+			}
+			post{
+				success{
+					step([$class:
+					'CoberturaPublisher',
+					autoUpdateHealth: false,
+					autoUpdateStability: false,
+					coberturaReportFile: 'coverage.xml',
+					failNoReports: false,
+					failUnhealthy: false,
+					failUnstable: false,
+					maxNumberOfBuilds: 10,
+					onlyStable: false,
+					sourceEncoding: 'ASCII',
+					zoomCoverageChart: false])
+				}
+				failure {
+					emailext body: 'Check console output at $BUILD_URL to view the results.\n Error while generating coverage.xml for coverage report.\n Please check and rerun the build.',
+					to: "${EMAIL_TO}",
+					subject: 'Build failed in Jenkins: $PROJECT_NAME - #$BUILD_NUMBER'
+				}
+			}
+		}		
+				
+		
+		stage('Zipping Json and Python files') {
+		when {
+				branch 'main'
+			}
+			   steps {
+				   dir("${env.WORKSPACE}/Python"){
+					sh 'zip -r python_files.zip *.py'
+					sh 'mv python_files.zip /home/projadmin/target_dir_prod'
+					}
+
+				   dir("${env.WORKSPACE}/JSON"){
+					sh 'zip -r json_files.zip *.json'
+					sh 'mv json_files.zip /home/projadmin/target_dir_prod'
+					}				
+				}
+			    post{
+				success{
+				    echo "Python and JSON zipped successfully"
+				}
+				failure {
+				    
+				    echo "Python and JSON zipped successfully failure."
+                }
+            }
+         }		 
+		}
+
+    post {
+        success {
+            echo 'Pipeline is finished successfully.'
+		emailext body: 'Check console output at $BUILD_URL to view the results.\n  ',
+		to: "${EMAIL_TO}",
+		subject: 'Build success in Jenkins: $PROJECT_NAME - #$BUILD_NUMBER'
+	    
+        }
+        unstable {
+			echo 'Pipeline is finished in unstable.'
+        }
+        failure {
+			echo 'Pipeline is finished in failure.'
+        }
+    } 
+}
